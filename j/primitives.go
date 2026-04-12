@@ -355,7 +355,7 @@ var verbGt = &Verb{
 func insertAdverb(v *Verb) *Verb {
 	return &Verb{
 		name:      v.name + "/",
-		monadRank: 1,
+		monadRank: MaxRank,
 		monad: func(w *Array) *Array {
 			if w.rank() == 0 {
 				return w
