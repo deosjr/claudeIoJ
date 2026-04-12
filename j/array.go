@@ -4,7 +4,8 @@ package main
 //
 // shape == nil or len(shape)==0  =>  scalar (rank 0), exactly 1 atom
 // data is always a flat slice in row-major order:
-//   []int64 | []float64 | []bool | []*Array  (boxed)
+//
+//	[]int64 | []float64 | []bool | []*Array  (boxed)
 type Array struct {
 	shape []int
 	data  any
@@ -90,9 +91,9 @@ func assemble(results []*Array, frameShape []int) *Array {
 	}
 	if !allSame {
 		boxed := make([]*Array, len(results))
-		copy(boxed, results)
-		outShape := append(frameShape, 1) // each cell is a scalar box
-		_ = outShape
+		for i, r := range results {
+			boxed[i] = scalarBox(r)
+		}
 		return &Array{shape: frameShape, data: boxed}
 	}
 	outShape := make([]int, 0, len(frameShape)+len(first.shape))
