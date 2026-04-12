@@ -387,6 +387,8 @@ func insertAdverb(v *Verb) *Verb {
 	return &Verb{
 		name:      v.name + "/",
 		monadRank: MaxRank,
+		lRank:     MaxRank,
+		rRank:     MaxRank,
 		monad: func(w *Array) *Array {
 			if w.rank() == 0 {
 				return w
@@ -423,6 +425,47 @@ func insertAdverb(v *Verb) *Verb {
 				acc = applyDyad(v, w.cell(i, cellShape), acc)
 			}
 			return acc
+		},
+		// Dyadic f/ is the outer product: a f/ w produces a table where
+		// result[i;j] = a[i] f w[j].
+		dyad: func(a, w *Array) *Array {
+			m := a.n()
+			n := w.n()
+			outShape := make([]int, 0, len(a.shape)+len(w.shape))
+			outShape = append(outShape, a.shape...)
+			outShape = append(outShape, w.shape...)
+			// fast path: both flat int64 slices with a typed dyad
+			if !isFloat(a) && !isFloat(w) && v.dyadInt != nil {
+				ad := toInt64Slice(a)
+				wd := toInt64Slice(w)
+				out := make([]int64, m*n)
+				for i := range m {
+					for j := range n {
+						out[i*n+j] = v.dyadInt(ad[i], wd[j])
+					}
+				}
+				return &Array{shape: outShape, data: out}
+			}
+			if v.dyadFloat != nil {
+				af := toFloat64Slice(a)
+				wf := toFloat64Slice(w)
+				out := make([]float64, m*n)
+				for i := range m {
+					for j := range n {
+						out[i*n+j] = v.dyadFloat(af[i], wf[j])
+					}
+				}
+				return &Array{shape: outShape, data: out}
+			}
+			// general path
+			results := make([]*Array, m*n)
+			for i := range m {
+				ai := a.cell(i, nil)
+				for j := range n {
+					results[i*n+j] = applyDyad(v, ai, w.cell(j, nil))
+				}
+			}
+			return assemble(results, outShape)
 		},
 	}
 }
