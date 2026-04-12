@@ -226,6 +226,7 @@ func TestInsertFold(t *testing.T) {
 // without it, the REPL would still compute the value but suppress output.
 func TestAssignment(t *testing.T) {
 	globals = map[string]*Array{} // reset for a clean slate
+	verbGlobals = map[string]*Verb{}
 	for i, tt := range []struct {
 		j, want string
 	}{

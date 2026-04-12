@@ -125,8 +125,10 @@ type word struct {
 	name string // for posAssign
 }
 
-// globals is the module-level symbol table for =: assignments.
+// globals is the module-level symbol table for noun =: assignments.
+// verbGlobals holds verb assignments (e.g. mul =: *).
 var globals = map[string]*Array{}
+var verbGlobals = map[string]*Verb{}
 
 // --- eval: entry point ---
 
@@ -177,6 +179,8 @@ func parseWords(tokens []token, start int) ([]word, int) {
 				continue
 			}
 			if v, ok := primitives[t.value]; ok {
+				words = append(words, word{pos: posVerb, verb: v})
+			} else if v, ok := verbGlobals[t.value]; ok {
 				words = append(words, word{pos: posVerb, verb: v})
 			} else if n, ok := globals[t.value]; ok {
 				words = append(words, word{pos: posNoun, noun: n})
@@ -244,13 +248,20 @@ func evalWords(words []word) *Array {
 	// Handle assignment: Name =: rhs  (may be preceded by verbs like [)
 	for i, w := range words {
 		if w.pos == posAssign {
-			rhs := evalWords(words[i+1:])
-			globals[w.name] = rhs
-			// Replace the assign word with the value and re-evaluate
-			// (handles [ M=: expr by leaving [ in front of the noun).
+			rhs := words[i+1:]
+			// Verb assignment: Name =: someVerb
+			if len(rhs) == 1 && rhs[0].pos == posVerb {
+				verbGlobals[w.name] = rhs[0].verb
+				// Nothing to substitute back: discard the assign word and
+				// evaluate whatever was to its left (e.g. a leading [).
+				return evalWords(words[:i])
+			}
+			// Noun assignment
+			result := evalWords(rhs)
+			globals[w.name] = result
 			newWords := make([]word, i+1)
 			copy(newWords, words[:i])
-			newWords[i] = word{pos: posNoun, noun: rhs}
+			newWords[i] = word{pos: posNoun, noun: result}
 			return evalWords(newWords)
 		}
 	}
