@@ -5,6 +5,14 @@ const MaxRank = 9999
 
 // Verb holds a J primitive (or derived) verb with its rank triple and
 // monadic/dyadic implementations.
+//
+// monadInt and monadFloat are optional rank-0 fast paths. When set,
+// applyMonad bypasses cell extraction and operates directly on the flat
+// slice, eliminating the two *Array allocations per element that the
+// general loop requires.
+//
+// dyadInt and dyadFloat play the same role for applyDyad.
+// When dyadInt is nil but dyadFloat is set, int inputs are promoted.
 type Verb struct {
 	name      string
 	monadRank int
@@ -12,6 +20,11 @@ type Verb struct {
 	rRank     int
 	monad     func(w *Array) *Array
 	dyad      func(a, w *Array) *Array
+	// rank-0 fast paths; nil means fall back to monad/dyad above
+	monadInt   func(int64) int64
+	monadFloat func(float64) float64
+	dyadInt    func(int64, int64) int64
+	dyadFloat  func(float64, float64) float64
 }
 
 // applyMonad applies v monadically to w, looping over frame cells as
@@ -20,6 +33,10 @@ func applyMonad(v *Verb, w *Array) *Array {
 	vrank := v.monadRank
 	if vrank >= w.rank() {
 		return v.monad(w)
+	}
+	// rank-0 fast path: iterate directly over the flat data, no cell allocation
+	if vrank == 0 {
+		return applyMonadFlat(v, w)
 	}
 	cellShape := w.cellShape(vrank)
 	frameShape := w.frameShape(vrank)
@@ -32,10 +49,52 @@ func applyMonad(v *Verb, w *Array) *Array {
 	return assemble(results, frameShape)
 }
 
+// applyMonadFlat is the rank-0 fast path for applyMonad.
+// It requires vrank == 0 and w.rank() > 0.
+func applyMonadFlat(v *Verb, w *Array) *Array {
+	switch d := w.data.(type) {
+	case []int64:
+		if v.monadInt != nil {
+			out := make([]int64, len(d))
+			for i, x := range d {
+				out[i] = v.monadInt(x)
+			}
+			return &Array{shape: w.shape, data: out}
+		}
+		if v.monadFloat != nil {
+			out := make([]float64, len(d))
+			for i, x := range d {
+				out[i] = v.monadFloat(float64(x))
+			}
+			return &Array{shape: w.shape, data: out}
+		}
+	case []float64:
+		if v.monadFloat != nil {
+			out := make([]float64, len(d))
+			for i, x := range d {
+				out[i] = v.monadFloat(x)
+			}
+			return &Array{shape: w.shape, data: out}
+		}
+	}
+	// fall back to general cell loop
+	n := w.n()
+	results := make([]*Array, n)
+	for i := range n {
+		results[i] = v.monad(w.cell(i, nil))
+	}
+	return assemble(results, w.shape)
+}
+
 // applyDyad applies v dyadically to a (left) and w (right), looping over
 // frame cells as determined by v.lRank and v.rRank.
 func applyDyad(v *Verb, a, w *Array) *Array {
 	lr, rr := v.lRank, v.rRank
+
+	// rank-0 fast path: operate directly on flat data, no cell allocation
+	if lr == 0 && rr == 0 {
+		return applyDyadFlat(v, a, w)
+	}
 
 	lFrame := frameOf(a, lr)
 	rFrame := frameOf(w, rr)
@@ -45,14 +104,12 @@ func applyDyad(v *Verb, a, w *Array) *Array {
 	lSize := product(lFrame)
 	rSize := product(rFrame)
 
-	// frames must agree or one must be length 1 (scalar extension)
+	// frames must agree or one must be empty (scalar extension)
 	var frameShape []int
 	switch {
 	case len(lFrame) == 0 && len(rFrame) == 0:
-		// both scalars at frame level
 		return v.dyad(a.cell(0, lCell), w.cell(0, rCell))
 	case len(lFrame) == 0:
-		// extend left across right frame
 		frameShape = rFrame
 		results := make([]*Array, rSize)
 		for i := range rSize {
@@ -60,7 +117,6 @@ func applyDyad(v *Verb, a, w *Array) *Array {
 		}
 		return assemble(results, frameShape)
 	case len(rFrame) == 0:
-		// extend right across left frame
 		frameShape = lFrame
 		results := make([]*Array, lSize)
 		for i := range lSize {
@@ -68,7 +124,6 @@ func applyDyad(v *Verb, a, w *Array) *Array {
 		}
 		return assemble(results, frameShape)
 	default:
-		// frames must agree
 		if !shapeEqual(lFrame, rFrame) {
 			panic("applyDyad: frames do not agree")
 		}
@@ -79,6 +134,116 @@ func applyDyad(v *Verb, a, w *Array) *Array {
 			results[i] = v.dyad(a.cell(i, lCell), w.cell(i, rCell))
 		}
 		return assemble(results, frameShape)
+	}
+}
+
+// applyDyadFlat is the rank-0 fast path for applyDyad.
+// It requires lRank == 0 and rRank == 0.
+// Handles scalar extension: if either argument is rank-0 it is broadcast.
+func applyDyadFlat(v *Verb, a, w *Array) *Array {
+	aScalar := a.rank() == 0
+	wScalar := w.rank() == 0
+
+	var outShape []int
+	switch {
+	case aScalar && wScalar:
+		outShape = nil
+	case aScalar:
+		outShape = w.shape
+	case wScalar:
+		outShape = a.shape
+	default:
+		if !shapeEqual(a.shape, w.shape) {
+			panic("applyDyad: frames do not agree")
+		}
+		outShape = a.shape
+	}
+
+	n := 1
+	if outShape != nil {
+		n = product(outShape)
+	}
+
+	useFloat := isFloat(a) || isFloat(w)
+
+	if !useFloat && v.dyadInt != nil {
+		ad := a.data.([]int64)
+		wd := w.data.([]int64)
+		out := make([]int64, n)
+		switch {
+		case aScalar && wScalar:
+			out[0] = v.dyadInt(ad[0], wd[0])
+		case aScalar:
+			av := ad[0]
+			for i, x := range wd {
+				out[i] = v.dyadInt(av, x)
+			}
+		case wScalar:
+			wv := wd[0]
+			for i, x := range ad {
+				out[i] = v.dyadInt(x, wv)
+			}
+		default:
+			for i := range n {
+				out[i] = v.dyadInt(ad[i], wd[i])
+			}
+		}
+		if outShape == nil {
+			return scalar(out[0])
+		}
+		return &Array{shape: outShape, data: out}
+	}
+
+	if v.dyadFloat != nil {
+		af := toFloat64Slice(a)
+		wf := toFloat64Slice(w)
+		out := make([]float64, n)
+		switch {
+		case aScalar && wScalar:
+			out[0] = v.dyadFloat(af[0], wf[0])
+		case aScalar:
+			av := af[0]
+			for i, x := range wf {
+				out[i] = v.dyadFloat(av, x)
+			}
+		case wScalar:
+			wv := wf[0]
+			for i, x := range af {
+				out[i] = v.dyadFloat(x, wv)
+			}
+		default:
+			for i := range n {
+				out[i] = v.dyadFloat(af[i], wf[i])
+			}
+		}
+		if outShape == nil {
+			return scalarF(out[0])
+		}
+		return &Array{shape: outShape, data: out}
+	}
+
+	// fall back to general cell loop (verb has no typed fast path)
+	switch {
+	case aScalar && wScalar:
+		return v.dyad(a, w)
+	case aScalar:
+		results := make([]*Array, n)
+		for i := range n {
+			results[i] = v.dyad(a, w.cell(i, nil))
+		}
+		return assemble(results, outShape)
+	case wScalar:
+		results := make([]*Array, n)
+		for i := range n {
+			results[i] = v.dyad(a.cell(i, nil), w)
+		}
+		return assemble(results, outShape)
+	default:
+		results := make([]*Array, n)
+		for i := range n {
+			results[i] = v.dyad(a.cell(i, nil), w.cell(i, nil))
+		}
+		return assemble(results, outShape)
 	}
 }
 
@@ -100,11 +265,15 @@ func cellOf(a *Array, r int) []int {
 // This is the implementation of the J rank conjunction ".
 func withRank(v *Verb, m, l, r int) *Verb {
 	return &Verb{
-		name:      v.name + `"`,
-		monadRank: m,
-		lRank:     l,
-		rRank:     r,
-		monad:     v.monad,
-		dyad:      v.dyad,
+		name:       v.name + `"`,
+		monadRank:  m,
+		lRank:      l,
+		rRank:      r,
+		monad:      v.monad,
+		dyad:       v.dyad,
+		monadInt:   v.monadInt,
+		monadFloat: v.monadFloat,
+		dyadInt:    v.dyadInt,
+		dyadFloat:  v.dyadFloat,
 	}
 }

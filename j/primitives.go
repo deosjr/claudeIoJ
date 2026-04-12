@@ -74,12 +74,15 @@ var verbRBracket = &Verb{
 // --- + identity / add ---
 
 var verbPlus = &Verb{
-	name:      "+",
-	monadRank: 0,
-	lRank:     0,
-	rRank:     0,
+	name:       "+",
+	monadRank:  0,
+	lRank:      0,
+	rRank:      0,
+	monadInt:   func(x int64) int64     { return x },
+	monadFloat: func(x float64) float64 { return x },
+	dyadInt:    func(a, w int64) int64     { return a + w },
+	dyadFloat:  func(a, w float64) float64 { return a + w },
 	monad: func(w *Array) *Array {
-		// identity
 		return w
 	},
 	dyad: func(a, w *Array) *Array {
@@ -93,10 +96,14 @@ var verbPlus = &Verb{
 // --- - negate / subtract ---
 
 var verbMinus = &Verb{
-	name:      "-",
-	monadRank: 0,
-	lRank:     0,
-	rRank:     0,
+	name:       "-",
+	monadRank:  0,
+	lRank:      0,
+	rRank:      0,
+	monadInt:   func(x int64) int64     { return -x },
+	monadFloat: func(x float64) float64 { return -x },
+	dyadInt:    func(a, w int64) int64     { return a - w },
+	dyadFloat:  func(a, w float64) float64 { return a - w },
 	monad: func(w *Array) *Array {
 		if isFloat(w) {
 			return scalarF(-atomFloat64(w))
@@ -118,6 +125,28 @@ var verbStar = &Verb{
 	monadRank: 0,
 	lRank:     0,
 	rRank:     0,
+	monadInt: func(x int64) int64 {
+		switch {
+		case x > 0:
+			return 1
+		case x < 0:
+			return -1
+		default:
+			return 0
+		}
+	},
+	monadFloat: func(x float64) float64 {
+		switch {
+		case x > 0:
+			return 1
+		case x < 0:
+			return -1
+		default:
+			return 0
+		}
+	},
+	dyadInt:   func(a, w int64) int64     { return a * w },
+	dyadFloat: func(a, w float64) float64 { return a * w },
 	monad: func(w *Array) *Array {
 		if isFloat(w) {
 			v := atomFloat64(w)
@@ -151,10 +180,12 @@ var verbStar = &Verb{
 // --- % reciprocal / divide ---
 
 var verbPercent = &Verb{
-	name:      "%",
-	monadRank: 0,
-	lRank:     0,
-	rRank:     0,
+	name:       "%",
+	monadRank:  0,
+	lRank:      0,
+	rRank:      0,
+	monadFloat: func(x float64) float64 { return 1.0 / x },
+	dyadFloat:  func(a, w float64) float64 { return a / w },
 	monad: func(w *Array) *Array {
 		return scalarF(1.0 / atomF(w))
 	},
@@ -364,6 +395,28 @@ func insertAdverb(v *Verb) *Verb {
 			if n == 0 {
 				panic("insert: empty array")
 			}
+			// rank-1 fast path: fold directly over a flat slice
+			if w.rank() == 1 {
+				switch d := w.data.(type) {
+				case []int64:
+					if v.dyadInt != nil {
+						acc := d[n-1]
+						for i := n - 2; i >= 0; i-- {
+							acc = v.dyadInt(d[i], acc)
+						}
+						return scalar(acc)
+					}
+				case []float64:
+					if v.dyadFloat != nil {
+						acc := d[n-1]
+						for i := n - 2; i >= 0; i-- {
+							acc = v.dyadFloat(d[i], acc)
+						}
+						return scalarF(acc)
+					}
+				}
+			}
+			// general path: reduce along the leading axis
 			cellShape := w.cellShape(w.rank() - 1)
 			acc := w.cell(n-1, cellShape)
 			for i := n - 2; i >= 0; i-- {
