@@ -19,63 +19,65 @@ import (
 // evaluated here.  Adverbs and conjunctions are left as separate
 // SynAdverb / SynConj words; the evaluator folds them into derived verbs.
 func parse(tokens []token) Sentence {
-	sent, _ := parseFrom(tokens, 0)
+	sent, _ := parseTokens(tokens)
 	return sent
 }
 
-// parseFrom builds a Sentence starting at index start.
-// It returns the Sentence and the index of the first unconsumed token.
-// It stops and returns when it sees tRParen, consuming the ')'.
-func parseFrom(tokens []token, start int) (Sentence, int) {
-	var sent Sentence
-	i := start
-	for i < len(tokens) {
-		t := tokens[i]
-		switch t.kind {
-		case tLParen:
-			sub, j := parseFrom(tokens, i+1)
-			sent = append(sent, SentenceWord{Kind: SynGroup, Sub: sub})
-			i = j
-		case tRParen:
-			return sent, i + 1
-		case tNumber:
-			sent = append(sent, SentenceWord{Kind: SynNum, Text: t.value})
-			i++
-		case tString:
-			sent = append(sent, SentenceWord{Kind: SynStr, Text: t.value})
-			i++
-		case tVerb:
-			// Single-character verb spellings are always primitives.
-			sent = append(sent, SentenceWord{Kind: SynPrim, Text: t.value})
-			i++
-		case tName:
-			// Peek ahead: if followed by =:, this is an assignment target.
-			if i+1 < len(tokens) && tokens[i+1].kind == tAssign {
-				sent = append(sent, SentenceWord{Kind: SynAssign, Text: t.value})
-				i += 2 // consume name and =:
-				continue
-			}
-			// Classify by whether the name is a known primitive.
-			if _, ok := primitives[t.value]; ok {
-				sent = append(sent, SentenceWord{Kind: SynPrim, Text: t.value})
-			} else {
-				sent = append(sent, SentenceWord{Kind: SynName, Text: t.value})
-			}
-			i++
-		case tAdverb:
-			sent = append(sent, SentenceWord{Kind: SynAdverb, Text: t.value})
-			i++
-		case tConj:
-			sent = append(sent, SentenceWord{Kind: SynConj, Text: t.value})
-			i++
-		default:
-			i++
-		}
+// parseTokens recursively consumes tokens from the front, building a Sentence.
+// It returns the Sentence and any unconsumed tokens — non-empty only when
+// a tRParen terminates a parenthesised sub-sentence mid-stream.
+func parseTokens(tokens []token) (Sentence, []token) {
+	if len(tokens) == 0 {
+		return nil, nil
 	}
-	return sent, i
+	// tRParen closes the current group; return remaining tokens to the caller
+	// that opened the matching tLParen.
+	if tokens[0].kind == tRParen {
+		return nil, tokens[1:]
+	}
+	word, rest, ok := consumeWord(tokens)
+	sent, remaining := parseTokens(rest)
+	if !ok {
+		return sent, remaining
+	}
+	return append([]SentenceWord{word}, sent...), remaining
 }
 
-// --- helpers ---
+// consumeWord produces one SentenceWord from the front of tokens.
+// It returns the word, the unconsumed remainder, and whether a word was produced.
+// tRParen is never passed here; parseTokens handles it before calling consumeWord.
+func consumeWord(tokens []token) (SentenceWord, []token, bool) {
+	t := tokens[0]
+	switch t.kind {
+	case tLParen:
+		// Recurse to collect the sub-sentence; parseTokens stops at tRParen.
+		sub, rest := parseTokens(tokens[1:])
+		return SentenceWord{Kind: SynGroup, Sub: sub}, rest, true
+	case tNumber:
+		return SentenceWord{Kind: SynNum, Text: t.value}, tokens[1:], true
+	case tString:
+		return SentenceWord{Kind: SynStr, Text: t.value}, tokens[1:], true
+	case tVerb:
+		// Single-character verb spellings are always primitives.
+		return SentenceWord{Kind: SynPrim, Text: t.value}, tokens[1:], true
+	case tName:
+		// Peek ahead: if followed by =:, this is an assignment target.
+		if len(tokens) > 1 && tokens[1].kind == tAssign {
+			return SentenceWord{Kind: SynAssign, Text: t.value}, tokens[2:], true
+		}
+		// Classify by whether the name is a known primitive.
+		if _, ok := primitives[t.value]; ok {
+			return SentenceWord{Kind: SynPrim, Text: t.value}, tokens[1:], true
+		}
+		return SentenceWord{Kind: SynName, Text: t.value}, tokens[1:], true
+	case tAdverb:
+		return SentenceWord{Kind: SynAdverb, Text: t.value}, tokens[1:], true
+	case tConj:
+		return SentenceWord{Kind: SynConj, Text: t.value}, tokens[1:], true
+	default:
+		return SentenceWord{}, tokens[1:], false
+	}
+}
 
 // parseNumber converts a J number token (uses _ for negative) to a scalar Array.
 func parseNumber(s string) *Array {
