@@ -30,78 +30,85 @@ const verbChars = "+-*%#$,<>[]"
 
 // tokenise breaks a J sentence into tokens.
 func tokenise(s string) []token {
-	var tokens []token
-	i := 0
-	for i < len(s) {
-		c := rune(s[i])
-		switch {
-		case c == ' ' || c == '\t':
-			i++
-		case c == '(':
-			tokens = append(tokens, token{tLParen, "("})
-			i++
-		case c == ')':
-			tokens = append(tokens, token{tRParen, ")"})
-			i++
-		case c == '\'':
-			j := i + 1
-			for j < len(s) && s[j] != '\'' {
-				j++
-			}
-			tokens = append(tokens, token{tString, s[i+1 : j]})
-			if j < len(s) {
-				j++
-			}
-			i = j
-		case c == '_' || unicode.IsDigit(c):
-			j := i
-			if s[j] == '_' {
-				j++
-			}
-			for j < len(s) && (unicode.IsDigit(rune(s[j])) || s[j] == '.') {
-				j++
-			}
-			if j < len(s) && (s[j] == 'e' || s[j] == 'E') {
-				j++
-				if j < len(s) && (s[j] == '+' || s[j] == '-') {
-					j++
-				}
-				for j < len(s) && unicode.IsDigit(rune(s[j])) {
-					j++
-				}
-			}
-			tokens = append(tokens, token{tNumber, s[i:j]})
-			i = j
-		case unicode.IsLetter(c):
-			j := i
-			for j < len(s) && (unicode.IsLetter(rune(s[j])) || s[j] == '_') {
-				j++
-			}
-			// consume trailing dot if it's part of a name (e.g. i.)
-			if j < len(s) && s[j] == '.' {
-				j++
-			}
-			tokens = append(tokens, token{tName, s[i:j]})
-			i = j
-		case c == '=':
-			if i+1 < len(s) && s[i+1] == ':' {
-				tokens = append(tokens, token{tAssign, "=:"})
-				i += 2
-			} else {
-				i++
-			}
-		case c == '/':
-			tokens = append(tokens, token{tAdverb, "/"})
-			i++
-		case c == '"':
-			tokens = append(tokens, token{tConj, `"`})
-			i++
-		case strings.ContainsRune(verbChars, c):
-			tokens = append(tokens, token{tVerb, string(c)})
-			i++
-		default:
-			i++
-		}
+	return tokeniseRunes([]rune(s))
+}
+
+// tokeniseRunes recursively consumes tokens from the front of rs.
+// Each call to nextToken consumes exactly the runes needed for one token
+// and returns the unconsumed remainder, so there is no position index to manage.
+func tokeniseRunes(rs []rune) []token {
+	if len(rs) == 0 {
+		return nil
 	}
-	return tokens
+	tok, rest, ok := nextToken(rs)
+	if !ok {
+		return tokeniseRunes(rest)
+	}
+	return append([]token{tok}, tokeniseRunes(rest)...)
+}
+
+// nextToken consumes the next token from the front of rs.
+// It returns the token, the remaining runes, and whether a token was produced.
+// Whitespace and unrecognised characters are consumed silently (ok = false).
+func nextToken(rs []rune) (token, []rune, bool) {
+	c := rs[0]
+	switch {
+	case c == ' ' || c == '\t':
+		return token{}, rs[1:], false
+	case c == '(':
+		return token{tLParen, "("}, rs[1:], true
+	case c == ')':
+		return token{tRParen, ")"}, rs[1:], true
+	case c == '/':
+		return token{tAdverb, "/"}, rs[1:], true
+	case c == '"':
+		return token{tConj, `"`}, rs[1:], true
+	case c == '\'':
+		j := 1
+		for j < len(rs) && rs[j] != '\'' {
+			j++
+		}
+		rest := rs[j+1:]
+		if j >= len(rs) {
+			rest = nil // unterminated string: consume to end
+		}
+		return token{tString, string(rs[1:j])}, rest, true
+	case c == '_' || unicode.IsDigit(c):
+		j := 0
+		if rs[j] == '_' {
+			j++
+		}
+		for j < len(rs) && (unicode.IsDigit(rs[j]) || rs[j] == '.') {
+			j++
+		}
+		if j < len(rs) && (rs[j] == 'e' || rs[j] == 'E') {
+			j++
+			if j < len(rs) && (rs[j] == '+' || rs[j] == '-') {
+				j++
+			}
+			for j < len(rs) && unicode.IsDigit(rs[j]) {
+				j++
+			}
+		}
+		return token{tNumber, string(rs[:j])}, rs[j:], true
+	case unicode.IsLetter(c):
+		j := 0
+		for j < len(rs) && (unicode.IsLetter(rs[j]) || rs[j] == '_') {
+			j++
+		}
+		// consume trailing dot if it's part of a name (e.g. i.)
+		if j < len(rs) && rs[j] == '.' {
+			j++
+		}
+		return token{tName, string(rs[:j])}, rs[j:], true
+	case c == '=':
+		if len(rs) > 1 && rs[1] == ':' {
+			return token{tAssign, "=:"}, rs[2:], true
+		}
+		return token{}, rs[1:], false // bare = is not J syntax
+	case strings.ContainsRune(verbChars, c):
+		return token{tVerb, string(c)}, rs[1:], true
+	default:
+		return token{}, rs[1:], false
+	}
 }
