@@ -217,23 +217,11 @@ var verbHash = &Verb{
 		}
 		switch d := w.data.(type) {
 		case []int64:
-			flat := make([]int64, n)
-			for i := range n {
-				flat[i] = d[i%wn]
-			}
-			return &Array{shape: newShape, data: flat}
+			return &Array{shape: newShape, data: cycleData(d, n)}
 		case []float64:
-			flat := make([]float64, n)
-			for i := range n {
-				flat[i] = d[i%wn]
-			}
-			return &Array{shape: newShape, data: flat}
+			return &Array{shape: newShape, data: cycleData(d, n)}
 		case []*Array:
-			flat := make([]*Array, n)
-			for i := range n {
-				flat[i] = d[i%wn]
-			}
-			return &Array{shape: newShape, data: flat}
+			return &Array{shape: newShape, data: cycleData(d, n)}
 		}
 		panic("reshape: unsupported type")
 	},
@@ -273,21 +261,13 @@ var verbComma = &Verb{
 		n := w.n()
 		switch d := w.data.(type) {
 		case []int64:
-			flat := make([]int64, n)
-			copy(flat, d)
-			return &Array{shape: []int{n}, data: flat}
+			return &Array{shape: []int{n}, data: copyData(d)}
 		case []float64:
-			flat := make([]float64, n)
-			copy(flat, d)
-			return &Array{shape: []int{n}, data: flat}
+			return &Array{shape: []int{n}, data: copyData(d)}
 		case []bool:
-			flat := make([]bool, n)
-			copy(flat, d)
-			return &Array{shape: []int{n}, data: flat}
+			return &Array{shape: []int{n}, data: copyData(d)}
 		case []*Array:
-			flat := make([]*Array, n)
-			copy(flat, d)
-			return &Array{shape: []int{n}, data: flat}
+			return &Array{shape: []int{n}, data: copyData(d)}
 		}
 		panic("ravel: unsupported type")
 	},

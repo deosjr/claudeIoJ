@@ -1,14 +1,58 @@
 package main
 
+// elem is the type constraint for J array element types.
+type elem interface {
+	int64 | float64 | bool | *Array
+}
+
 // Array is the fundamental J data type: a ranked, typed, flat array.
 //
 // shape == nil or len(shape)==0  =>  scalar (rank 0), exactly 1 atom
 // data is always a flat slice in row-major order:
 //
 //	[]int64 | []float64 | []bool | []*Array  (boxed)
+//
+// Importantly, data in an Array can change type throughout the computation!
 type Array struct {
 	shape []int
 	data  any
+}
+
+// sliceCell extracts a sub-slice of typed data as a new Array.
+// Used by cell for the non-scalar case where all four element types
+// share identical slicing logic.
+func sliceCell[T elem](d []T, i, size int, cs []int) *Array {
+	return &Array{shape: cs, data: d[i*size : (i+1)*size]}
+}
+
+// flatten concatenates the typed data of all results into one flat slice.
+// The extract function retrieves the appropriately-typed slice from each Array.
+// Used by assemble for the same-shape case.
+func flatten[T elem](results []*Array, extract func(*Array) []T) []T {
+	flat := make([]T, 0, len(results)*results[0].n())
+	for _, r := range results {
+		flat = append(flat, extract(r)...)
+	}
+	return flat
+}
+
+// copyData returns a copy of a typed data slice.
+// Used by ravel (monad ,) which re-shapes already-flat data to rank 1.
+func copyData[T elem](d []T) []T {
+	out := make([]T, len(d))
+	copy(out, d)
+	return out
+}
+
+// cycleData builds a slice of length n by cycling through d.
+// Used by reshape (dyad # and $) which tiles fill data to the requested size.
+func cycleData[T elem](d []T, n int) []T {
+	wn := len(d)
+	out := make([]T, n)
+	for i := range n {
+		out[i] = d[i%wn]
+	}
+	return out
 }
 
 func (a *Array) rank() int { return len(a.shape) }
@@ -63,13 +107,13 @@ func (a *Array) cell(i int, cs []int) *Array {
 	size := product(cs)
 	switch d := a.data.(type) {
 	case []int64:
-		return &Array{shape: cs, data: d[i*size : (i+1)*size]}
+		return sliceCell(d, i, size, cs)
 	case []float64:
-		return &Array{shape: cs, data: d[i*size : (i+1)*size]}
+		return sliceCell(d, i, size, cs)
 	case []bool:
-		return &Array{shape: cs, data: d[i*size : (i+1)*size]}
+		return sliceCell(d, i, size, cs)
 	case []*Array:
-		return &Array{shape: cs, data: d[i*size : (i+1)*size]}
+		return sliceCell(d, i, size, cs)
 	}
 	panic("cell: unknown data type")
 }
@@ -102,36 +146,16 @@ func assemble(results []*Array, frameShape []int) *Array {
 
 	switch first.data.(type) {
 	case []float64:
-		flat := make([]float64, 0, len(results)*first.n())
-		for _, r := range results {
-			flat = append(flat, toFloat64Slice(r)...)
-		}
-		return &Array{shape: outShape, data: flat}
+		return &Array{shape: outShape, data: flatten(results, toFloat64Slice)}
 	case []int64:
-		flat := make([]int64, 0, len(results)*first.n())
-		for _, r := range results {
-			flat = append(flat, toInt64Slice(r)...)
-		}
-		return &Array{shape: outShape, data: flat}
+		return &Array{shape: outShape, data: flatten(results, toInt64Slice)}
 	case []bool:
-		flat := make([]bool, 0, len(results)*first.n())
-		for _, r := range results {
-			flat = append(flat, toBoolSlice(r)...)
-		}
-		return &Array{shape: outShape, data: flat}
+		return &Array{shape: outShape, data: flatten(results, toBoolSlice)}
 	case []*Array:
-		flat := make([]*Array, 0, len(results)*first.n())
-		for _, r := range results {
-			flat = append(flat, toBoxSlice(r)...)
-		}
-		return &Array{shape: outShape, data: flat}
+		return &Array{shape: outShape, data: flatten(results, toBoxSlice)}
 	}
-	// scalar int64 assembled
-	flat := make([]int64, 0, len(results))
-	for _, r := range results {
-		flat = append(flat, toInt64Slice(r)...)
-	}
-	return &Array{shape: outShape, data: flat}
+	// scalar int64: data is []int64{v} per element
+	return &Array{shape: outShape, data: flatten(results, toInt64Slice)}
 }
 
 // --- constructors ---
