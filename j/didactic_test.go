@@ -267,6 +267,50 @@ func TestBoxes(t *testing.T) {
 	}
 }
 
+// TestTrains — trains are sequences of verbs that combine their results.
+//
+// A hook (f g) applies two verbs: (f g) y = y f (g y).
+// A fork (f g h) applies three verbs: (f g h) y = (f y) g (h y).
+// Both have dyadic forms. A capped fork (n g h) replaces the left verb
+// with a constant: (n g h) y = n g (h y).
+// Trains enable tacit (point-free) style: verbs defined by composition
+// rather than by naming their argument.
+func TestTrains(t *testing.T) {
+	globals = map[string]*Array{}
+	verbGlobals = map[string]*Verb{}
+	for i, tt := range []struct {
+		j, want string
+	}{
+		// hook monad: (f g) y = y f (g y)
+		{"(+ *) 5", "6"},        // 5 + (*5) = 5+1 = 6
+		{"(- *) _4", "-3"},      // _4 - (*_4) = _4-_1 = -3
+		{"(, i.) 3", "3 0 1 2"}, // 3 , (i.3) = 3 0 1 2
+
+		// hook dyad: x (f g) y = x f (g y)
+		{"3 (+ *) 5", "4"}, // 3 + (*5) = 3+1 = 4
+
+		// fork monad: (f g h) y = (f y) g (h y)
+		{"(+ - *) 4", "3"},      // (+4) - (*4) = 4-1 = 3
+		{"(+/ % #) 2 4 6", "4"}, // mean: (2+4+6)%3 = 12%3 = 4
+
+		// fork dyad: x (f g h) y = (x f y) g (x h y)
+		{"3 (* + +) 5", "23"}, // (3*5)+(3+5) = 15+8 = 23
+
+		// capped fork: (n g h) y = n g (h y)
+		{"(1 + *) 5", "2"},       // 1 + (*5) = 1+1 = 2
+		{"(10 * #) 1 2 3", "30"}, // 10 * (#1 2 3) = 10*3 = 30
+
+		// tacit assignment: a train can be bound to a name
+		{"mean =: +/ % #", ""},    // verb assignment produces no output
+		{"mean 1 2 3 4 5", "3"},   // mean of 0..4: 15%5 = 3
+		{"mean i. 5", "2"},        // mean of 0 1 2 3 4: 10%5 = 2
+	} {
+		if got := run(tt.j); got != tt.want {
+			t.Errorf("%d: J %q\n got  %q\nwant %q", i, tt.j, got, tt.want)
+		}
+	}
+}
+
 // TestRankConjunction — " lets you override the rank at which a verb applies.
 //
 // f"n applies f treating each rank-n cell as one argument.

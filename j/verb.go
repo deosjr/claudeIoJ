@@ -1,7 +1,9 @@
 package main
 
+import "math"
+
 // MaxRank is the sentinel meaning "consume the entire argument".
-const MaxRank = 9999
+const MaxRank = math.MaxInt
 
 // Verb holds a J primitive (or derived) verb with its rank triple and
 // monadic/dyadic implementations.
@@ -259,6 +261,83 @@ func cellOf(a *Array, r int) []int {
 		return a.shape
 	}
 	return a.cellShape(r)
+}
+
+// --- trains: hooks, forks, capped forks ---
+
+// constVerb returns a verb that ignores its argument and always returns n.
+// Used as the left tine of a capped fork: (n g h) y = n g (h y).
+func constVerb(n *Array) *Verb {
+	return &Verb{
+		name:      "const",
+		monadRank: MaxRank,
+		lRank:     MaxRank,
+		rRank:     MaxRank,
+		monad:     func(_ *Array) *Array { return n },
+		dyad:      func(_, _ *Array) *Array { return n },
+	}
+}
+
+// hookVerb forms a two-verb train (hook).
+//
+//	monad: (f g) y   = y f (g y)
+//	dyad:  x (f g) y = x f (g y)
+func hookVerb(f, g *Verb) *Verb {
+	return &Verb{
+		name:      "(" + f.name + " " + g.name + ")",
+		monadRank: MaxRank,
+		lRank:     MaxRank,
+		rRank:     MaxRank,
+		monad: func(w *Array) *Array {
+			return applyDyad(f, w, applyMonad(g, w))
+		},
+		dyad: func(a, w *Array) *Array {
+			return applyDyad(f, a, applyMonad(g, w))
+		},
+	}
+}
+
+// forkVerb forms a three-verb train (fork).
+//
+//	monad: (f g h) y   = (f y) g (h y)
+//	dyad:  x (f g h) y = (x f y) g (x h y)
+func forkVerb(f, g, h *Verb) *Verb {
+	return &Verb{
+		name:      "(" + f.name + " " + g.name + " " + h.name + ")",
+		monadRank: MaxRank,
+		lRank:     MaxRank,
+		rRank:     MaxRank,
+		monad: func(w *Array) *Array {
+			return applyDyad(g, applyMonad(f, w), applyMonad(h, w))
+		},
+		dyad: func(a, w *Array) *Array {
+			return applyDyad(g, applyDyad(f, a, w), applyDyad(h, a, w))
+		},
+	}
+}
+
+// foldVerbRun reduces a run of two or more verbs into a single derived verb
+// by grouping from the right: odd-length runs form a fork at the left,
+// even-length runs form a hook at the left.
+//
+//	2 verbs: hook(f, g)
+//	3 verbs: fork(f, g, h)
+//	4 verbs: hook(f, fork(g, h, k))
+//	5 verbs: fork(f, g, fork(h, j, k))
+func foldVerbRun(verbs []*Verb) *Verb {
+	switch len(verbs) {
+	case 1:
+		return verbs[0]
+	case 2:
+		return hookVerb(verbs[0], verbs[1])
+	case 3:
+		return forkVerb(verbs[0], verbs[1], verbs[2])
+	default:
+		if len(verbs)%2 == 0 {
+			return hookVerb(verbs[0], foldVerbRun(verbs[1:]))
+		}
+		return forkVerb(verbs[0], verbs[1], foldVerbRun(verbs[2:]))
+	}
 }
 
 // withRank returns a copy of v with the rank triple overridden.

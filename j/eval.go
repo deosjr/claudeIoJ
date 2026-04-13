@@ -29,6 +29,59 @@ type word struct {
 	name string // for posAssign
 }
 
+// allVerbWords reports whether every word in the slice is a verb.
+func allVerbWords(words []word) bool {
+	for _, w := range words {
+		if w.pos != posVerb {
+			return false
+		}
+	}
+	return true
+}
+
+// --- trains ---
+
+// foldTrains scans a word list for runs of two or more consecutive verb words
+// and folds each run into a single derived verb (hook or fork).
+// It does not absorb a preceding noun; capped forks are handled by the
+// SynGroup case in resolve, where parentheses make the context unambiguous.
+func foldTrains(words []word) []word {
+	var result []word
+	for i := 0; i < len(words); {
+		if words[i].pos != posVerb {
+			result = append(result, words[i])
+			i++
+			continue
+		}
+		// collect the run of consecutive verb words
+		j := i
+		for j < len(words) && words[j].pos == posVerb {
+			j++
+		}
+		run := words[i:j]
+		// Don't fold a verb run that is immediately followed by a noun:
+		// those verbs are applied right-to-left to that noun, not a train.
+		// Trains only form when the verb run is at the end (no noun to the right).
+		if j < len(words) && words[j].pos == posNoun {
+			result = append(result, run...)
+			i = j
+			continue
+		}
+		if len(run) < 2 {
+			result = append(result, run[0])
+			i = j
+			continue
+		}
+		verbs := make([]*Verb, len(run))
+		for k, w := range run {
+			verbs[k] = w.verb
+		}
+		result = append(result, word{pos: posVerb, verb: foldVerbRun(verbs)})
+		i = j
+	}
+	return result
+}
+
 // --- eval: the public entry point ---
 
 // eval resolves a parsed Sentence and evaluates it to a value.
@@ -67,9 +120,28 @@ func resolve(sent Sentence) []word {
 			}
 			words = append(words, word{pos: posNoun, noun: vec(runes)})
 		case SynGroup:
-			// Parenthesised sub-sentence: evaluate it now, treat result as a noun.
-			noun := evalWords(resolve(sw.Sub))
-			words = append(words, word{pos: posNoun, noun: noun})
+			// Parenthesised sub-sentence.
+			// Three cases:
+			//   1. Capped fork: (n f g …) — leading noun, all rest are verbs.
+			//      The noun becomes a constant verb as the leftmost tine.
+			//   2. Pure-verb train: all words are verbs — return as a single verb.
+			//   3. Everything else: evaluate and return as a noun.
+			inner := resolve(sw.Sub)
+			if len(inner) >= 3 && inner[0].pos == posNoun && allVerbWords(inner[1:]) {
+				verbs := make([]*Verb, len(inner))
+				verbs[0] = constVerb(inner[0].noun)
+				for k, w := range inner[1:] {
+					verbs[k+1] = w.verb
+				}
+				words = append(words, word{pos: posVerb, verb: foldVerbRun(verbs)})
+			} else {
+				inner = foldTrains(inner)
+				if len(inner) == 1 && inner[0].pos == posVerb {
+					words = append(words, inner[0])
+				} else {
+					words = append(words, word{pos: posNoun, noun: evalWords(inner)})
+				}
+			}
 		case SynPrim:
 			words = append(words, word{pos: posVerb, verb: primitives[sw.Text]})
 		case SynName:
@@ -124,6 +196,7 @@ func resolve(sent Sentence) []word {
 // All verbs have equal precedence; the leftmost verb is the principal verb
 // because everything to its right is evaluated first (recursively).
 func evalWords(words []word) *Array {
+	words = foldTrains(words)
 	if len(words) == 0 {
 		return nil
 	}
