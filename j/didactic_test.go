@@ -8,7 +8,7 @@ import "testing"
 
 // run evaluates a J sentence and returns its display string.
 func run(s string) string {
-	return display(eval(tokenise(s)))
+	return display(eval(parse(tokenise(s))))
 }
 
 // TestLiterals — how J writes numbers and arrays.

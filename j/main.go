@@ -24,7 +24,7 @@ func main() {
 				}
 			}()
 			tokens := tokenise(line)
-			result := eval(tokens)
+			result := eval(parse(tokens))
 			if result != nil {
 				fmt.Println(display(result))
 			}

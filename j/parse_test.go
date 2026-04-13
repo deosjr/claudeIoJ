@@ -26,14 +26,14 @@ func TestTokenise(t *testing.T) {
 }
 
 func TestEvalScalar(t *testing.T) {
-	result := eval(tokenise("3"))
+	result := eval(parse(tokenise("3")))
 	if result == nil || result.rank() != 0 || atomInt64(result) != 3 {
 		t.Errorf("eval '3': got %v", result)
 	}
 }
 
 func TestEvalVector(t *testing.T) {
-	result := eval(tokenise("1 2 3"))
+	result := eval(parse(tokenise("1 2 3")))
 	if result == nil {
 		t.Fatal("eval '1 2 3': nil result")
 	}
@@ -46,21 +46,21 @@ func TestEvalVector(t *testing.T) {
 }
 
 func TestEvalMonad(t *testing.T) {
-	result := eval(tokenise("- 3"))
+	result := eval(parse(tokenise("- 3")))
 	if atomInt64(result) != -3 {
 		t.Errorf("- 3: got %d want -3", atomInt64(result))
 	}
 }
 
 func TestEvalDyad(t *testing.T) {
-	result := eval(tokenise("1 + 2"))
+	result := eval(parse(tokenise("1 + 2")))
 	if atomInt64(result) != 3 {
 		t.Errorf("1 + 2: got %d want 3", atomInt64(result))
 	}
 }
 
 func TestEvalVectorDyad(t *testing.T) {
-	result := eval(tokenise("1 2 3 + 4 5 6"))
+	result := eval(parse(tokenise("1 2 3 + 4 5 6")))
 	if !reflect.DeepEqual(result.data.([]int64), []int64{5, 7, 9}) {
 		t.Errorf("1 2 3 + 4 5 6: got %v want [5 7 9]", result.data)
 	}
@@ -68,14 +68,14 @@ func TestEvalVectorDyad(t *testing.T) {
 
 func TestEvalMonadPlus(t *testing.T) {
 	// monadic + is identity
-	result := eval(tokenise("+ 1 2 3"))
+	result := eval(parse(tokenise("+ 1 2 3")))
 	if !reflect.DeepEqual(result.data.([]int64), []int64{1, 2, 3}) {
 		t.Errorf("+ 1 2 3: got %v want [1 2 3]", result.data)
 	}
 }
 
 func TestEvalTally(t *testing.T) {
-	result := eval(tokenise("# 1 2 3"))
+	result := eval(parse(tokenise("# 1 2 3")))
 	if atomInt64(result) != 3 {
 		t.Errorf("# 1 2 3: got %d want 3", atomInt64(result))
 	}
@@ -83,7 +83,7 @@ func TestEvalTally(t *testing.T) {
 
 func TestEvalInsert(t *testing.T) {
 	// +/ 1 2 3 = 6
-	result := eval(tokenise("+/ 1 2 3"))
+	result := eval(parse(tokenise("+/ 1 2 3")))
 	if atomInt64(result) != 6 {
 		t.Errorf("+/ 1 2 3: got %d want 6", atomInt64(result))
 	}
@@ -91,7 +91,7 @@ func TestEvalInsert(t *testing.T) {
 
 func TestEvalParens(t *testing.T) {
 	// (1 + 2) = 3 as scalar
-	result := eval(tokenise("(1 + 2)"))
+	result := eval(parse(tokenise("(1 + 2)")))
 	if atomInt64(result) != 3 {
 		t.Errorf("(1 + 2): got %d want 3", atomInt64(result))
 	}
@@ -99,7 +99,7 @@ func TestEvalParens(t *testing.T) {
 
 func TestEvalIota(t *testing.T) {
 	// i. 5 = 0 1 2 3 4
-	result := eval(tokenise("i. 5"))
+	result := eval(parse(tokenise("i. 5")))
 	if !reflect.DeepEqual(result.data.([]int64), []int64{0, 1, 2, 3, 4}) {
 		t.Errorf("i. 5: got %v", result.data)
 	}
@@ -107,7 +107,7 @@ func TestEvalIota(t *testing.T) {
 
 func TestEvalReshapeWithIota(t *testing.T) {
 	// 2 3 $ i. 6 -> 2x3 matrix
-	result := eval(tokenise("2 3 $ i. 6"))
+	result := eval(parse(tokenise("2 3 $ i. 6")))
 	if !reflect.DeepEqual(result.shape, []int{2, 3}) {
 		t.Errorf("2 3 $ i. 6 shape: got %v want [2 3]", result.shape)
 	}
@@ -117,7 +117,7 @@ func TestEvalReshapeWithIota(t *testing.T) {
 }
 
 func TestEvalNegativeNumber(t *testing.T) {
-	result := eval(tokenise("_3"))
+	result := eval(parse(tokenise("_3")))
 	if atomInt64(result) != -3 {
 		t.Errorf("_3: got %d want -3", atomInt64(result))
 	}
