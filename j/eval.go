@@ -55,27 +55,23 @@ func eval(sent Sentence) *Array {
 // After resolve, evalWords sees only posNoun, posVerb, and posAssign words.
 func resolve(sent Sentence) []word {
 	var words []word
-	for i := 0; i < len(sent); {
+	for i := 0; i < len(sent); i++ {
 		sw := sent[i]
 		switch sw.Kind {
 		case SynNum:
 			words = append(words, word{pos: posNoun, noun: parseNumber(sw.Text)})
-			i++
 		case SynStr:
 			runes := make([]int64, 0, len(sw.Text))
 			for _, r := range sw.Text {
 				runes = append(runes, int64(r))
 			}
 			words = append(words, word{pos: posNoun, noun: vec(runes)})
-			i++
 		case SynGroup:
 			// Parenthesised sub-sentence: evaluate it now, treat result as a noun.
 			noun := evalWords(resolve(sw.Sub))
 			words = append(words, word{pos: posNoun, noun: noun})
-			i++
 		case SynPrim:
 			words = append(words, word{pos: posVerb, verb: primitives[sw.Text]})
-			i++
 		case SynName:
 			// User-defined names: check verb namespace first, then noun namespace.
 			if v, ok := verbGlobals[sw.Text]; ok {
@@ -85,50 +81,38 @@ func resolve(sent Sentence) []word {
 			} else {
 				panic("unknown name: " + sw.Text)
 			}
-			i++
 		case SynAssign:
 			words = append(words, word{pos: posAssign, name: sw.Text})
-			i++
 		case SynAdverb:
 			// "/" must immediately follow a verb.
-			if sw.Text == "/" {
-				if len(words) == 0 || words[len(words)-1].pos != posVerb {
-					panic("/ without preceding verb")
-				}
-				v := insertAdverb(words[len(words)-1].verb)
-				words[len(words)-1] = word{pos: posVerb, verb: v}
+			if len(words) == 0 || words[len(words)-1].pos != posVerb {
+				panic("/ without preceding verb")
 			}
-			i++
+			v := insertAdverb(words[len(words)-1].verb)
+			words[len(words)-1] = word{pos: posVerb, verb: v}
 		case SynConj:
 			// `"` forms a rank conjunction: verb " rankArg → derived verb.
-			// The rank argument is the next word in the sentence (number or group).
-			if sw.Text == `"` {
-				if len(words) == 0 || words[len(words)-1].pos != posVerb {
-					panic(`" without preceding verb`)
-				}
-				i++ // consume the `"` word
-				var rankNoun *Array
-				if i < len(sent) {
-					switch sent[i].Kind {
-					case SynNum:
-						rankNoun = parseNumber(sent[i].Text)
-						i++
-					case SynGroup:
-						rankNoun = evalWords(resolve(sent[i].Sub))
-						i++
-					}
-				}
-				if rankNoun == nil {
-					panic(`" with no rank argument`)
-				}
-				ranks := parseRankArg(rankNoun)
-				v := words[len(words)-1].verb
-				words[len(words)-1] = word{pos: posVerb, verb: withRank(v, ranks[0], ranks[1], ranks[2])}
-			} else {
-				i++
+			// The rank argument is the next element; i++ here plus the loop's
+			// own increment means we advance past both `"` and its argument.
+			if len(words) == 0 || words[len(words)-1].pos != posVerb {
+				panic(`" without preceding verb`)
 			}
-		default:
 			i++
+			var rankNoun *Array
+			if i < len(sent) {
+				switch sent[i].Kind {
+				case SynNum:
+					rankNoun = parseNumber(sent[i].Text)
+				case SynGroup:
+					rankNoun = evalWords(resolve(sent[i].Sub))
+				}
+			}
+			if rankNoun == nil {
+				panic(`" with no rank argument`)
+			}
+			ranks := parseRankArg(rankNoun)
+			v := words[len(words)-1].verb
+			words[len(words)-1] = word{pos: posVerb, verb: withRank(v, ranks[0], ranks[1], ranks[2])}
 		}
 	}
 	return words
@@ -209,21 +193,17 @@ func assembleNouns(words []word) *Array {
 	if len(words) == 1 {
 		return words[0].noun
 	}
-	allScalar := true
+	allScalar, hasFloat := true, false
 	for _, w := range words {
 		if w.noun.rank() != 0 {
 			allScalar = false
 			break
 		}
+		if isFloat(w.noun) {
+			hasFloat = true
+		}
 	}
 	if allScalar {
-		hasFloat := false
-		for _, w := range words {
-			if isFloat(w.noun) {
-				hasFloat = true
-				break
-			}
-		}
 		if hasFloat {
 			vals := make([]float64, len(words))
 			for i, w := range words {
